@@ -1,0 +1,71 @@
+name: Package ROM
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.release.id }}
+  cancel-in-progress: false
+
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_TITLE: ${{ github.event.release.name }}
+      RELEASE_TARGET: ${{ github.event.release.target_commitish }}
+
+    steps:
+      - name: Check release details
+        env:
+          RELEASE_IMMUTABLE: ${{ github.event.release.immutable }}
+        run: |
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
+            echo "::error::Use a tag such as v2.0 or v2.0.1."
+            exit 1
+          fi
+          if [[ "$RELEASE_TITLE" != "$RELEASE_TAG" ]]; then
+            echo "::error::The release title must match the tag."
+            exit 1
+          fi
+          if [[ "$RELEASE_TARGET" != "main" ]]; then
+            echo "::error::Create the release with main as its target."
+            exit 1
+          fi
+          if [[ "$RELEASE_IMMUTABLE" == "true" ]]; then
+            echo "::error::This release is immutable. Its ZIP must be attached before publishing."
+            exit 1
+          fi
+
+      - name: Check out the released commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Create ROM ZIP
+        run: |
+          rom="gbc/aws-heroes-world-meetup.gbc"
+          if [[ -L gbc || -L "$rom" || ! -f "$rom" || ! -s "$rom" ]]; then
+            echo "::error::The ROM must be a non-empty regular file, not a symbolic link."
+            exit 1
+          fi
+          zip -X "$RUNNER_TEMP/aws-heroes-world-meetup-$RELEASE_TAG.zip" "$rom"
+
+      - name: Attach ZIP to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "$RUNNER_TEMP/aws-heroes-world-meetup-$RELEASE_TAG.zip" \
+            --repo "$GITHUB_REPOSITORY"
